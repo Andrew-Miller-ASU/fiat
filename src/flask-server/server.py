@@ -1,6 +1,7 @@
 from flask import Flask, request
 import cv2
 import os
+import time
 import mediapipe as mp
 import numpy as np
 mp_drawing = mp.solutions.drawing_utils
@@ -24,13 +25,22 @@ def calculate_angle(a, b, c):
     return angle
 
 
-def sit_stand_processor(video_path):
+def sit_stand_processor(video_path, live_or_upload):
     #VIDEO FEED
     cap = cv2.VideoCapture(video_path)
 
     #sit-stand counter
     counter = 0
     stage = None
+
+    #timer
+    timer_start = False
+    current_time = time.time()
+    
+    fps_start_time = time.time()
+    
+    frames = 0
+    
 
     #Setup mediapipe instance
     with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
@@ -39,9 +49,17 @@ def sit_stand_processor(video_path):
             ret, frame = cap.read()
 
             if not ret:
+                time.sleep(5)
+                timer_start = False
                 break  # End of video
 
-            
+            frames += 1
+            fps_current_time = time.time()
+            fps = frames / (fps_current_time - fps_start_time)
+            multiplier = 1
+
+            if live_or_upload == "upload":
+                multiplier = fps / 30
 
             #detect stuff and render
 
@@ -78,12 +96,13 @@ def sit_stand_processor(video_path):
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 #Left hip
                 cv2.putText(image, str(lAngle),
-                            tuple(np.multiply(lHip, [width, height]).astype(int)),
+                            tuple(np.multiply(lKnee, [width, height]).astype(int)),
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
                 #Right Hip
                 #cv2.putText(image, str(rAngle),
-                 #           tuple(np.multiply(rHip, [width, height]).astype(int)),
+                 #           tuple(np.multiply(rKnee, [width, height]).astype(int)),
                   #                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
+                  #counter text near shoulder
                 counter_text = "Count: " + str(counter)
                 cv2.putText(image, counter_text,
                             tuple(np.multiply(lShoulder, [width * 1.2, height]).astype(int)),
@@ -94,9 +113,21 @@ def sit_stand_processor(video_path):
                 if lAngle >= 175 and rAngle >= 175 and stage=="sit":
                     stage = "stand"
                     counter += 1
-                
+                if stage == "sit" and timer_start == False: 
+                    timer_start = True
+                    current_time = time.time()
 
+                if timer_start:
+                    timer_text = "Time: " + str(int(30 - (time.time() - current_time) * multiplier))
+                    cv2.putText(image, timer_text,
+                            tuple(np.multiply(lShoulder, [width * 1.2, height * 1.2]).astype(int)),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
                 
+                    if (time.time() - current_time) * multiplier >= 30:
+
+                        time.sleep(5)
+                        timer_start = False
+                        break
 
             except:
                 pass
@@ -186,13 +217,23 @@ def upload():
        video.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
        path_to_file = "uploads/" + filename
        #video_processor(path_to_file)
-       reps = sit_stand_processor(path_to_file)
+       reps = sit_stand_processor(path_to_file, "upload")
+       #reps = sit_stand_processor(0)
 
        #############################################################################################################
        
-
-       return video.filename #reps 
+       return_message = "Reps: " + str(reps)
+       return return_message #video.filename #reps 
     return "failure"
+
+@app.route('/live_record')
+def live_record():
+
+    reps = sit_stand_processor(0, "live")
+
+    return_message = "Reps: " + str(reps)
+
+    return return_message
 
 if __name__ == "__main__":
 
