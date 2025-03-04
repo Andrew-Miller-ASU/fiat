@@ -5,6 +5,7 @@ function MyUploadButton() {
 
     const [selectedVideo, setSelectedVideo] = useState(null);
     const fileInputRef = useRef(null);
+    const [data, setData] = useState('');
 
     const handleFileChange = async (event) => {
         const file = event.target.files[0];
@@ -25,7 +26,8 @@ function MyUploadButton() {
                     res => res.text()
                 ).then(
 
-                    text => console.log(text)
+                    text => setData(text) //console.log(text)
+                    
                 )
                 
             }
@@ -44,7 +46,7 @@ function MyUploadButton() {
 
     
 
-  const handleClick = () => {
+    const handleClick = () => {
       
       fileInputRef.current.click();
     };
@@ -54,7 +56,7 @@ function MyUploadButton() {
     return (
       <div>
         <button onClick={handleClick}>
-          Click me
+                {selectedVideo ? 'Upload New Video' : 'Upload Video'}
           </button>
         <input
             type="file"
@@ -74,7 +76,12 @@ function MyUploadButton() {
                     
             )
                 }
+            <br />
+            <br/>
+            {data}
+
         </div>
+
   );
 }
 
