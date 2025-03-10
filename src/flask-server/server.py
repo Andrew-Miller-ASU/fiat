@@ -1,240 +1,293 @@
-from flask import Flask, request
-import cv2
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
 import os
+import cv2
 import time
 import mediapipe as mp
 import numpy as np
+from datetime import date
+
+app = Flask(__name__)
+CORS(app)
+
+# Folder to store all uploaded videos (and processed videos).
+UPLOAD_FOLDER = 'uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
 mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
 
-
-app = Flask(__name__)
-
 def calculate_angle(a, b, c):
+    """Utility to calculate joint angle between three points."""
+    a = np.array(a)  # First
+    b = np.array(b)  # Mid
+    c = np.array(c)  # Last
 
-    a = np.array(a) #First
-    b = np.array(b) #Second
-    c = np.array(c) #Third
-
-    radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
-    angle = np.abs(radians*180 / np.pi)
-
+    radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - \
+              np.arctan2(a[1] - b[1], a[0] - b[0])
+    angle = np.abs(radians * 180.0 / np.pi)
     if angle > 180.0:
-        angle = 360 - angle
-
+        angle = 360.0 - angle
     return angle
 
+def sit_stand_processor(input_path, output_path, live_or_upload):
+    """
+    Reads `input_path`, analyzes each frame for sit-stand,
+    draws overlays, writes annotated frames to `output_path`.
+    Returns final repetition count.
+    Important note: live_or_upload should be a string, live for live recordings and
+    upload for uploaded video. This is how the function will know whether to adjust for
+    frame rate or not. Adjustment is unnecessary for live videos.
+    """
+    cap = cv2.VideoCapture(input_path)      # This will be an int 0 for live processing and a filepath for uploaded videos.
 
-def sit_stand_processor(video_path, live_or_upload):
-    #VIDEO FEED
-    cap = cv2.VideoCapture(video_path)
+    # Prepare output video writer
+    fourcc = cv2.VideoWriter_fourcc(*'H264')
+    fps_in = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    #sit-stand counter
+    # If the original video's FPS is 0 or None, fallback to 30
+    if fps_in <= 0:
+        fps_in = 30  
+
+    out = cv2.VideoWriter(output_path, fourcc, fps_in, (width, height))
+
     counter = 0
     stage = None
-
-    #timer
     timer_start = False
-    current_time = time.time()
-    
+    start_time = None
+
     fps_start_time = time.time()
     
     frames = 0
-    
+    multiplier = 1
 
-    #Setup mediapipe instance
-    with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
+    with mp_pose.Pose(
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5
+    ) as pose:
 
-        while cap.isOpened():
+        while True:
             ret, frame = cap.read()
-
             if not ret:
-                time.sleep(5)
                 timer_start = False
-                break  # End of video
+                break
 
-            frames += 1
-            fps_current_time = time.time()
-            fps = frames / (fps_current_time - fps_start_time)
-            multiplier = 1
+            
+            
 
-            if live_or_upload == "upload":
+            if live_or_upload == "upload":          # We only need to adjust for processing speed if we are processing an uploaded
+                                                    # video.
+
+                frames += 1                     # Calculate frame rate to adjust timer for the processing speed
+                fps_current_time = time.time()
+                fps = frames / (fps_current_time - fps_start_time)
+
                 multiplier = fps / 30
 
-            #detect stuff and render
-
-            #recolor image to RBG
+            # Recolor image to RGB
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image.flags.writeable = False
-            #make detections
+
+            # Pose detection
             results = pose.process(image)
-            #recolor image to BGR
+
+            # Recolor back to BGR (for drawing)
             image.flags.writeable = True
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-            #extract landmarks
+            # Extract landmark data
             try:
                 landmarks = results.pose_landmarks.landmark
 
-                #get coordinates
-                lShoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x, landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
-                lHip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x, landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
-                rHip = [landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].x, landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].y]
-                lKnee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x, landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
-                rKnee = [landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].x, landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].y]
-                lAnkle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x, landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
-                rAnkle = [landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].x, landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y]
+                lShoulder = [
+                    landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x,
+                    landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y
+                ]
+                lHip = [
+                    landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x,
+                    landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y
+                ]
+                rHip = [
+                    landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].x,
+                    landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].y
+                ]
+                lKnee = [
+                    landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x,
+                    landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y
+                ]
+                rKnee = [
+                    landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].x,
+                    landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].y
+                ]
+                lAnkle = [
+                    landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
+                    landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y
+                ]
+                rAnkle = [
+                    landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].x,
+                    landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y
+                ]
 
-                #calculate angle
+                # Calculate angles
                 lAngle = calculate_angle(lHip, lKnee, lAnkle)
                 rAngle = calculate_angle(rHip, rKnee, rAnkle)
 
-                #visualize
-                
+                """ Visualization: put the left knee angle as text
+                cv2.putText(
+                    image,
+                    f'{int(lAngle)}',
+                    tuple(np.multiply(lKnee, [width, height]).astype(int)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2
+                )
+                    """
+                # Show rep count near left shoulder
+                counter_text = f"Count: {counter}"
+                cv2.putText(
+                    image,
+                    counter_text,
+                    (int(lShoulder[0]*width), max(0, int(lShoulder[1]*height - 20))),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2
+                )
 
-                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                #Left hip
-                cv2.putText(image, str(lAngle),
-                            tuple(np.multiply(lKnee, [width, height]).astype(int)),
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
-                #Right Hip
-                #cv2.putText(image, str(rAngle),
-                 #           tuple(np.multiply(rKnee, [width, height]).astype(int)),
-                  #                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
-                  #counter text near shoulder
-                counter_text = "Count: " + str(counter)
-                cv2.putText(image, counter_text,
-                            tuple(np.multiply(lShoulder, [width * 1.2, height]).astype(int)),
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
-                #sit-stand counter logic
-                if lAngle <= 150 and rAngle <= 150:
+                # Sit-stand logic
+                if lAngle <= 145 and rAngle <= 145:
                     stage = "sit"
-                if lAngle >= 175 and rAngle >= 175 and stage=="sit":
+                    # Start the timer if we haven't yet
+                    if not timer_start:
+                        timer_start = True
+                        start_time = time.time()
+
+                if lAngle >= 170 and rAngle >= 170 and stage == "sit":
                     stage = "stand"
                     counter += 1
-                if stage == "sit" and timer_start == False: 
-                    timer_start = True
-                    current_time = time.time()
 
+                # If we have been in the "sit" stage for more than 30s, break out
                 if timer_start:
-                    timer_text = "Time: " + str(int(30 - (time.time() - current_time) * multiplier))
-                    cv2.putText(image, timer_text,
-                            tuple(np.multiply(lShoulder, [width * 1.2, height * 1.2]).astype(int)),
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
-                
-                    if (time.time() - current_time) * multiplier >= 30:
-
-                        time.sleep(5)
-                        timer_start = False
+                    elapsed = int(30 - (time.time() - start_time) * multiplier)     # Count down from 30 as an int.
+                                                                                    # Multiplier is our frame rate / 30
+                                                                                    # for the 30 seconds we want to process.
+                                                                                    # Multiplier is 1 when we are live processing
+                    # Render a timer
+                    cv2.putText(
+                        image,
+                        f"Time: {elapsed}s",
+                        (int(lShoulder[0]*width), int(lShoulder[1]*height + 20)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2
+                    )
+                    if elapsed <= 0:            # Stop after 30 seconds, aka when the timer counts from 30 to 0.
+                        # We can stop analysis here if desired
                         break
 
             except:
                 pass
 
-            #render detections
-            mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
-                                      mp_drawing.DrawingSpec(color=(245,117,66), thickness=2, circle_radius=2),
-                                      mp_drawing.DrawingSpec(color=(245,66,230), thickness=2, circle_radius=2))
-
+            # Draw pose landmarks on the frame
+            if results.pose_landmarks:
+                mp_drawing.draw_landmarks(
+                    image,
+                    results.pose_landmarks,
+                    mp_pose.POSE_CONNECTIONS,
+                    mp_drawing.DrawingSpec(thickness=2, circle_radius=2),
+                    mp_drawing.DrawingSpec(thickness=2, circle_radius=2)
+                )
             
-
-            cv2.imshow('Mediapipe Feed', image)
+            cv2.imshow('Frailty Indicator Analysis Tool', image)        # Show the video or live processing
 
             if cv2.waitKey(10) & 0xFF == ord('q'):
                 break
 
-    cap.release()
-    cv2.destroyAllWindows()
+            # Write the annotated frame to output
+            out.write(image)
+
+        cap.release()
+        out.release()
+        cv2.destroyAllWindows()         # This is needed to ensure the program terminates all unused processing windows.
+                                        # Without this, you'll have an error that causes the server to be unable to process 
+                                        # videos sequentually. 
 
     return counter
 
-def video_processor(video_path):
+@app.route('/videos', methods=['GET'])
+def list_videos():
+   
+    all_files = os.listdir(app.config['UPLOAD_FOLDER'])
+    video_extensions = ('.mp4', '.mov', '.avi', '.mkv', '.webm')
+    videos = [f for f in all_files if f.lower().endswith(video_extensions) and '_processed' not in f]
+    return jsonify(videos), 200
 
-    # Initialize the HOG person detector
-    hog = cv2.HOGDescriptor()
-    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+@app.route('/uploads/<path:filename>', methods=['GET'])
+def serve_video(filename):
+    """Serve any video from the uploads folder."""
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-    # Open the video file
-    
-    cap = cv2.VideoCapture(video_path)
-
-    if not cap.isOpened():
-        print("Error: Could not open video file.")
-        exit()
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break  # End of video
-
-        # Resize the frame (optional, but can improve performance)
-        frame = cv2.resize(frame, (640, 480))
-
-        # Detect people in the frame
-        boxes, weights = hog.detectMultiScale(frame, winStride=(8, 8), padding=(32, 32), scale=1.05)
-
-        # Draw bounding boxes around detected people
-        for (x, y, w, h) in boxes:
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-        # Display the resulting frame
-        cv2.imshow('Video with People Detection', frame)
-
-        # Check for 'q' key press to exit
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    # Release the video capture object and close all windows
-    cap.release()
-    cv2.destroyAllWindows()
-
-
-
-
-
-
-@app.route('/upload', methods=['POST'])
-def upload():
+@app.route('/analyze', methods=['POST'])
+def analyze_sit_stand():
+    """
+    Single endpoint that:
+      1) Receives file from 'video' form-data.
+      2) Saves original video.
+      3) Performs the Mediapipe analysis headlessly.
+      4) Saves processed video with "_processed" appended.
+      5) Returns JSON: { original: "...", processed: "...", reps: N }
+    """
     if 'video' not in request.files:
         return "No video file part in the request", 400
-     
+
     video = request.files['video']
-    
     if video.filename == '':
         return "No selected video file", 400
+
+    filename = video.filename
+    original_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    video.save(original_path)
+
+    # Build output filename
+    # e.g. myvideo.mp4 => myvideo_processed.mp4
+    name, ext = os.path.splitext(filename)
+    processed_filename = f"{name}_processed{ext}"
+    processed_path = os.path.join(app.config['UPLOAD_FOLDER'], processed_filename)
+
+    # Run analysis
+    reps = sit_stand_processor(original_path, processed_path, "upload")
+
+    return jsonify({
+        "success": "Analysis Complete!",
+        "original": "Original: " + filename,
+        "processed": "Processed: " + processed_filename,
+        "reps": "Reps: " + str(reps)
+    }), 200
+
+
+@app.route('/live_analyze')
+def live_analyze_sit_stand():
+    """
+    Single endpoint that:
+      1) Prepares a video filename using the date and time for a live processing.
+      2) Performs the Mediapipe analysis headlessly.
+      3) Saves processed video with "_processed" appended.
+      4) Returns JSON: { original: "...", processed: "...", reps: N }
+    """
     
-    if video: 
-          
-       # process the file object here! 
-       #############################################################################################################
 
-       UPLOAD_FOLDER = 'uploads'
-       os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-       app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+    # Build output filename
+    # e.g. myvideo.mp4 => myvideo_processed.mp4
+    name = "live_video_" + str(date.today()) + "_" + str(int(time.time()))
+    ext = ".mp4"
+    processed_filename = f"{name}_processed{ext}"
+    processed_path = os.path.join(app.config['UPLOAD_FOLDER'], processed_filename)
 
-       filename = video.filename
-       video.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-       path_to_file = "uploads/" + filename
-       #video_processor(path_to_file)
-       reps = sit_stand_processor(path_to_file, "upload")
-       #reps = sit_stand_processor(0)
+    # Run analysis
+    reps = sit_stand_processor(0, processed_path, "live")
 
-       #############################################################################################################
-       
-       return_message = "Reps: " + str(reps)
-       return return_message #video.filename #reps 
-    return "failure"
-
-@app.route('/live_record')
-def live_record():
-
-    reps = sit_stand_processor(0, "live")
-
-    return_message = "Reps: " + str(reps)
-
-    return return_message
+    return jsonify({
+        "success": "Live Analysis Complete!",
+        "original": "Original: webcam recording",
+        "processed": "Processed: " + processed_filename,
+        "reps": "Reps: " + str(reps)
+    }), 200
 
 if __name__ == "__main__":
-
     app.run(debug=True)
