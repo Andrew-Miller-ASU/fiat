@@ -1,22 +1,31 @@
 from flask import Flask, request, jsonify, send_from_directory
+from flask_socketio import SocketIO, emit
 from flask_cors import CORS
+import base64
 import os
 import cv2
-import time
-import mediapipe as mp
 import numpy as np
-from datetime import date
+import mediapipe as mp
+import time
 
 app = Flask(__name__)
 CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Folder to store all uploaded videos (and processed videos).
+mp_pose = mp.solutions.pose
+mp_drawing = mp.solutions.drawing_utils
+pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-mp_drawing = mp.solutions.drawing_utils
-mp_pose = mp.solutions.pose
+# State variables
+stage = None
+counter = 0
+timer_start = False
+start_time = None
+multiplier = 1
 
 def calculate_angle(a, b, c):
     """Utility to calculate joint angle between three points."""
@@ -50,7 +59,7 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
 
     # If the original video's FPS is 0 or None, fallback to 30
     if fps_in <= 0:
-        fps_in = 30  
+        fps_in = 30
 
     out = cv2.VideoWriter(output_path, fourcc, fps_in, (width, height))
 
@@ -60,7 +69,7 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
     start_time = None
 
     fps_start_time = time.time()
-    
+
     frames = 0
     multiplier = 1
 
@@ -75,8 +84,8 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
                 timer_start = False
                 break
 
-            
-            
+
+
 
             if live_or_upload == "upload":          # We only need to adjust for processing speed if we are processing an uploaded
                                                     # video.
@@ -193,7 +202,7 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
                     mp_drawing.DrawingSpec(thickness=2, circle_radius=2),
                     mp_drawing.DrawingSpec(thickness=2, circle_radius=2)
                 )
-            
+
             cv2.imshow('Frailty Indicator Analysis Tool', image)        # Show the video or live processing
 
             if cv2.waitKey(10) & 0xFF == ord('q'):
@@ -205,14 +214,83 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
         cap.release()
         out.release()
         cv2.destroyAllWindows()         # This is needed to ensure the program terminates all unused processing windows.
-                                        # Without this, you'll have an error that causes the server to be unable to process 
-                                        # videos sequentually. 
+                                        # Without this, you'll have an error that causes the server to be unable to process
+                                        # videos sequentually.
 
     return counter
 
+def process_frame(image):
+    global stage, counter, timer_start, start_time, multiplier
+
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = pose.process(image_rgb)
+
+    if not results.pose_landmarks:
+        _, buffer = cv2.imencode('.jpg', image)
+        return base64.b64encode(buffer).decode('utf-8'), counter
+
+    landmarks = results.pose_landmarks.landmark
+
+    # Return the frame without incrementing the counter if neither the left nor right hip are in view
+    # Ensures a repetition is not erroneously counted when only a user's upper body is visible
+    if not (landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].visibility > 0.75 or landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].visibility > 0.75):
+        _, buffer = cv2.imencode('.jpg', image)
+        return base64.b64encode(buffer).decode('utf-8'), counter
+
+    lShoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x,
+                 landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
+    lHip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x,
+            landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
+    rHip = [landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].x,
+            landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].y]
+    lKnee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x,
+             landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
+    rKnee = [landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].x,
+             landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].y]
+    lAnkle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
+              landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
+    rAnkle = [landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].x,
+              landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y]
+
+    height, width, _ = image.shape
+
+    lAngle = calculate_angle(lHip, lKnee, lAnkle)
+    rAngle = calculate_angle(rHip, rKnee, rAnkle)
+
+    cv2.putText(image, f'Count: {counter}', (int(lShoulder[0]*width), max(0, int(lShoulder[1]*height - 20))),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+    # Sit-stand logic
+    if lAngle <= 155 and rAngle <= 155:
+        stage = "sit"
+        # Start the timer if we haven't yet
+        if not timer_start:
+            timer_start = True
+            start_time = time.time()
+
+    if lAngle >= 160 and rAngle >= 160 and stage == "sit":
+        stage = "stand"
+        counter += 1
+
+    if timer_start:
+        elapsed = int(30 - (time.time() - start_time) * multiplier)
+        cv2.putText(image, f'Time: {elapsed}s',
+                    (int(lShoulder[0]*width), int(lShoulder[1]*height + 20)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+        if elapsed <= 0:
+            return None, counter
+
+    mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
+                              mp_drawing.DrawingSpec(thickness=2, circle_radius=2),
+                              mp_drawing.DrawingSpec(thickness=2, circle_radius=2))
+
+    _, buffer = cv2.imencode('.jpg', image)
+    return base64.b64encode(buffer).decode('utf-8'), counter
+
 @app.route('/videos', methods=['GET'])
 def list_videos():
-   
+
     all_files = os.listdir(app.config['UPLOAD_FOLDER'])
     video_extensions = ('.mp4', '.mov', '.avi', '.mkv', '.webm')
     videos = [f for f in all_files if f.lower().endswith(video_extensions) and '_processed' not in f]
@@ -270,7 +348,7 @@ def live_analyze_sit_stand():
       3) Saves processed video with "_processed" appended.
       4) Returns JSON: { original: "...", processed: "...", reps: N }
     """
-    
+
 
     # Build output filename
     # e.g. myvideo.mp4 => myvideo_processed.mp4
@@ -289,5 +367,28 @@ def live_analyze_sit_stand():
         "reps": "Reps: " + str(reps)
     }), 200
 
-if __name__ == "__main__":
-    app.run(debug=True)
+@socketio.on('connect')
+def handle_connect():
+    global stage, counter, timer_start, start_time, multiplier
+    stage = None
+    counter = 0
+    timer_start = False
+    start_time = None
+    multiplier = 1
+
+@socketio.on('frame')
+def handle_frame(data):
+    if data.startswith('data:image/jpeg;base64,'):
+        data = data.replace('data:image/jpeg;base64,', '')
+    frame = base64.b64decode(data)
+    np_img = np.frombuffer(frame, dtype=np.uint8)
+    image = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
+    processed_frame, reps = process_frame(image)
+
+    emit('processed_frame', {
+        'image': processed_frame,
+        'reps': reps
+    })
+
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True)

@@ -1,85 +1,116 @@
-import React, { useState, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useEffect, useRef, useState } from 'react';
+import io from 'socket.io-client';
 import scores from './images/Sit-Stand-Scores.png';
+import { Link } from "react-router-dom";
 
-function MyLiveProcessPage() {
+const socket = io('http://localhost:5000');
+socket.io.opts.forceNew = true;
 
-    
-    const [data, setData] = useState('');
-    async function handleClick(){
+const LiveProcessingPage = () => {
+    const videoRef = useRef(null);
+    const canvasRef = useRef(null);
+    const streamRef = useRef(null);
+    const intervalRef = useRef(null);
 
-        
-        try {
-            const response = await fetch('http://127.0.0.1:5000/live_analyze', { // Make an Http POST request to http://localhost:5000/live_record
+    const [processedFrame, setProcessedFrame] = useState(null);
+    const [reps, setReps] = useState(0);
+    const [sessionEnded, setSessionEnded] = useState(false);
 
-                
+    useEffect(() => {
+        let isMounted = true;
 
-            }) /*.then(
+        const initCamera = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                if (!isMounted) return;
 
-                res => res.text()
-            ).then(
+                streamRef.current = stream;
+                if (videoRef.current) {
+                    videoRef.current.srcObject = stream;
+                    videoRef.current.play();
+                }
 
-                text => setData(text)
-            )*/
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
 
-            if (!response.ok) {
-                throw new Error(`Server error: ${response.status}`);
+                const sendFrame = () => {
+                    if (
+                        !videoRef.current ||
+                        videoRef.current.readyState !== 4 ||
+                        sessionEnded
+                    ) return;
+
+                    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+                    canvas.toBlob((blob) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            socket.emit('frame', reader.result);
+                        };
+                        reader.readAsDataURL(blob);
+                    }, 'image/jpeg');
+                };
+
+                intervalRef.current = setInterval(sendFrame, 100);
+            } catch (err) {
+                console.error("Error accessing webcam:", err);
             }
+        };
 
-            setData(await response.json());
-        }
-        catch (error) {
+        initCamera();
 
-            console.error('Fetch error:', error);
-        }
-    };
+        // Close the connection and remove the video frame
+        socket.off('processed_frame').on('processed_frame', (data) => {
+            if (data.image === null) {
+                setSessionEnded(true);
+                setProcessedFrame(null);
+                return;
+            }
+            setProcessedFrame(`data:image/jpeg;base64,${data.image}`);
+            setReps(data.reps);
+        });
 
-
+        return () => {
+            isMounted = false;
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach(track => track.stop());
+            }
+        };
+    }, [sessionEnded]);
 
     return (
         <div style={{ textAlign: 'center', marginTop: '60px' }}>
-
-            <h2>
-                Live Processing
-            </h2>
+            <h2>Live Processing</h2>
             <p>
-                 1. Click the "Live Record" button. <br/><br/>
-                 2. Wait for the Frailty Indicator Analysis Tool to access your webcam. <br/><br/>
-                 3. Perform sit-stand test. <br/><br/>
-                 Make sure that you are far enough away from the camera. <br />
-                 Your whole body should be visible from head to toe. <br />
-                 The timer will begin when you sit down in the chair. <br />
+                1. Allow the Frailty Indicator Analysis Tool to access your webcam. <br/><br/>
+                2. Get in the proper position for performing the sit-stand test. Ensure that you are not too close to the camera,
+                and that your whole body is within frame.<br/><br/>
+                3. Begin performing the test. The 30-second timer will start counting down automatically.<br/><br/>
             </p>
-            <button onClick={handleClick}>
-                Live Record
-            </button>
+            <br/>
+            <p><strong>Reps:</strong> {reps}</p>
 
+            <video ref={videoRef} width="960" height="720" style={{ display: 'none' }} />
+            <canvas ref={canvasRef} width="960" height="720" style={{ display: 'none' }} />
+
+            {processedFrame && (
+                <img
+                    src={processedFrame}
+                    alt="Processed Frame"
+                    style={{ width: '960px', height: '720px', border: '2px solid #333' }}
+                />
+            )}
 
             <br />
-            
-
             <div style={{ marginTop: '30px' }}>
                 <Link to="/">
                     <button>Back to Main</button>
                 </Link>
             </div>
-            <p>
-                <br/>
-                {data.success}
-                <br/><br/>
-                {data.original}
-                <br/><br/>
-                {data.processed}
-                <br/><br/>
-                {data.reps}
-            </p>
-            <img src={scores} alt="Below Average Scores Based on Age Group"/>
-            
+            <br />
+            <img src={scores} alt="Below Average Scores Based on Age Group" />
         </div>
-
-
     );
-}
+};
 
-
-export default MyLiveProcessPage;
+export default LiveProcessingPage;
