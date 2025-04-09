@@ -7,8 +7,8 @@ export default function RecordPage() {
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const [videoChunks, setVideoChunks] = useState([]);
   const [videoURL, setVideoURL] = useState(null);
-
-  const [analysisType, setAnalysisType] = useState('sit-stand'); // NEW
+  const [loading, setLoading] = useState(false);
+  const [analysisType, setAnalysisType] = useState('sit-stand');
 
   const videoRef = useRef(null);
 
@@ -58,17 +58,16 @@ export default function RecordPage() {
       return;
     }
 
-    // Create a File from the in-memory chunks
     const blob = new Blob(videoChunks, { type: 'video/webm' });
     const file = new File([blob], `recorded-video-${Date.now()}.webm`, { type: 'video/webm' });
 
     const formData = new FormData();
     formData.append('video', file);
-    // Pass the chosen analysis type:
     formData.append('analysisType', analysisType);
 
     try {
-      // POST to '/analyze' (instead of '/upload') so we get processed videos
+      setLoading(true);
+
       const response = await fetch('http://127.0.0.1:5000/analyze', {
         method: 'POST',
         body: formData,
@@ -79,43 +78,49 @@ export default function RecordPage() {
       }
 
       const data = await response.json();
-      // e.g. data = { original: "myvideo.webm", processed: "myvideo_processed.webm", reps: 3 }
+      if (data.warning) {
+        alert(`Warning: ${data.warning}`);
+      } else {
       alert(`
         Upload & Analysis Complete!
         Original: ${data.original}
         Processed: ${data.processed}
         Reps Counted: ${data.reps}
       `);
+      }
 
-      // Clear out state so user can record again
       setVideoURL(null);
       setVideoChunks([]);
     } catch (error) {
-      console.error('❌ Upload error:', error);
+      console.error(' Upload error:', error);
       alert('Error uploading video.');
+    } finally {
+      setLoading(false);
     }
   }
 
+  
+  
+  
+  
+  
   return (
     <div style={{ textAlign: 'center', marginTop: '60px' }}>
       <h2>Record Your Video</h2>
       <p>Click "Start Recording" to begin, then "Stop Recording" to finish.</p>
 
-      {/* Choose the type of analysis, similar to UploadPage */}
       <div style={{ marginBottom: '20px' }}>
         <label htmlFor="analysisType">Analysis Type: </label>
         <select
           id="analysisType"
           value={analysisType}
           onChange={(e) => setAnalysisType(e.target.value)}
+          disabled={loading}
         >
           <option value="sit-stand">Sit-Stand</option>
-          {/* Add more if you want: */}
-          {/* <option value="other-type">Other Type</option> */}
         </select>
       </div>
 
-      {/* Live Camera Preview */}
       <video
         ref={videoRef}
         width="400"
@@ -126,33 +131,38 @@ export default function RecordPage() {
 
       <div style={{ marginTop: '20px' }}>
         {!recording ? (
-          <button onClick={startRecording}>Start Recording</button>
+          <button onClick={startRecording} disabled={loading}>Start Recording</button>
         ) : (
           <button onClick={stopRecording}>Stop Recording</button>
         )}
       </div>
 
-      {/* Once data is available, let user "Save" the in-memory video to a URL */}
       {videoChunks.length > 0 && !videoURL && (
         <div style={{ marginTop: '20px' }}>
-          <button onClick={handleSaveVideo}>Save Video</button>
+          <button onClick={handleSaveVideo} disabled={loading}>Save Video</button>
         </div>
       )}
 
-      {/* Show local preview once "Save Video" has been clicked */}
       {videoURL && (
         <div style={{ marginTop: '20px' }}>
           <h4>Recorded Video Preview</h4>
           <video src={videoURL} width="400" controls />
           <div style={{ marginTop: '20px' }}>
-            <button onClick={handleUpload}>Confirm Upload & Analyze</button>
+            <button onClick={handleUpload} disabled={loading}>Confirm Upload & Analyze</button>
           </div>
+        </div>
+      )}
+
+      {loading && (
+        <div style={{ marginTop: '20px' }}>
+          <div className="loader" />
+          <p>Processing video... please wait.</p>
         </div>
       )}
 
       <div style={{ marginTop: '30px' }}>
         <Link to="/">
-          <button>Back to Main</button>
+          <button disabled={loading}>Back to Main</button>
         </Link>
       </div>
     </div>

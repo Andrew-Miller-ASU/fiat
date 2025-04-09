@@ -8,6 +8,8 @@ export default function UploadPage() {
   const [analysisType, setAnalysisType] = useState('sit-stand');
   const fileInputRef = useRef(null);
   const [data, setData] = useState('');
+  const [loading, setLoading] = useState(false); // just one loading flag
+
   function handleFileChange(event) {
     const file = event.target.files[0];
     if (!file) {
@@ -27,11 +29,11 @@ export default function UploadPage() {
 
     const formData = new FormData();
     formData.append('video', selectedFile);
-    // Optional: pass an analysisType if your server code expects it:
     formData.append('analysisType', analysisType);
 
+    setLoading(true);
+
     try {
-      // POST to your new '/analyze' endpoint (instead of '/upload')
       const response = await fetch('http://127.0.0.1:5000/analyze', {
         method: 'POST',
         body: formData,
@@ -41,25 +43,15 @@ export default function UploadPage() {
         throw new Error(`Server error: ${response.status}`);
       }
 
-
-        setData(await response.json()); // This will be your output
-
-
-      //const data = await response.json();
-      // e.g. data = { original: "myvideo.mp4", processed: "myvideo_processed.mp4", reps: 3 }
-      /*alert(
-        `Upload & Analysis Complete!
-         Original: ${data.original}
-         Processed: ${data.processed}
-         Reps Counted: ${data.reps}`
-      );*/
-
-      // Clear UI
+      const json = await response.json();
+      setData(json);
       setSelectedFile(null);
       setPreviewURL(null);
     } catch (error) {
       console.error('Error uploading/analyzing video:', error);
       alert('Error uploading video. Check console for details.');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -72,19 +64,18 @@ export default function UploadPage() {
       <h2>Upload & Analyze Your Video</h2>
       <p>Select a video file to be processed.</p>
 
-      {/* Analysis selection (currently just one type, but you could add more) */}
       <label htmlFor="analysisSelect">Choose Analysis Type:</label>
       <select
         id="analysisSelect"
         value={analysisType}
         onChange={(e) => setAnalysisType(e.target.value)}
         style={{ marginLeft: '10px', marginRight: '20px' }}
+        disabled={loading}
       >
         <option value="sit-stand">Sit-Stand</option>
-        {/* Add other analysis types here */}
       </select>
 
-      <button onClick={handleClickChooseFile}>Choose Video</button>
+      <button onClick={handleClickChooseFile} disabled={loading}>Choose Video</button>
       <input
         type="file"
         accept="video/*"
@@ -100,9 +91,17 @@ export default function UploadPage() {
         </div>
       )}
 
-      {previewURL && (
+      {previewURL && !loading && (
         <div style={{ marginTop: '20px' }}>
           <button onClick={handleConfirmUpload}>Confirm Upload</button>
+        </div>
+      )}
+
+      {/* 🌀 Loading Spinner */}
+      {loading && (
+        <div style={{ marginTop: '20px' }}>
+          <div className="loader" />
+          <p>Processing video... please wait.</p>
         </div>
       )}
 
@@ -112,17 +111,18 @@ export default function UploadPage() {
         </Link>
       </div>
 
-      <p>   {/* Output Results */}
-                <br/>
-                {data.success}
-                <br/><br/>
-                {data.original}
-                <br/><br/>
-                {data.processed}
-                <br/><br/>
-                {data.reps}
+      <p>
+        <br />
+        {data.success}
+        <br /><br />
+        {data.original}
+        <br /><br />
+        {data.processed}
+        <br /><br />
+        {data.reps}
       </p>
-      <img src={scores} alt="Below Average Scores Based on Age Group" /> {/* Scores image */}
+
+      <img src={scores} alt="Below Average Scores Based on Age Group" />
     </div>
   );
 }
