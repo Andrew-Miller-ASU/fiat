@@ -20,12 +20,16 @@ UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
+waiting_time = 5
+
 # State variables
 stage = None
 counter = 0
 timer_start = False
 start_time = None
 multiplier = 1
+userInPosition = False
+waiting_to_start = False
 
 def calculate_angle(a, b, c):
     """Utility to calculate joint angle between three points."""
@@ -220,7 +224,7 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
     return counter
 
 def process_frame(image):
-    global stage, counter, timer_start, start_time, multiplier
+    global stage, counter, timer_start, start_time, multiplier, userInPosition, waiting_to_start
 
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     results = pose.process(image_rgb)
@@ -233,9 +237,13 @@ def process_frame(image):
 
     # Return the frame without incrementing the counter if neither the left nor right hip are in view
     # Ensures a repetition is not erroneously counted when only a user's upper body is visible
-    if not (landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].visibility > 0.75 or landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].visibility > 0.75):
-        _, buffer = cv2.imencode('.jpg', image)
-        return base64.b64encode(buffer).decode('utf-8'), counter
+    # if not (landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].visibility > 0.75 or landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].visibility > 0.75):
+    #    _, buffer = cv2.imencode('.jpg', image)
+    #    return base64.b64encode(buffer).decode('utf-8'), counter
+
+    noseVisible = landmarks[mp_pose.PoseLandmark.NOSE.value].visibility > 0.75
+    hipsVisible = landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].visibility > 0.75 or landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].visibility > 0.75
+    kneesVisible = landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].visibility > 0.75 or landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].visibility > 0.75
 
     lShoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x,
                  landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
@@ -257,33 +265,47 @@ def process_frame(image):
     lAngle = calculate_angle(lHip, lKnee, lAnkle)
     rAngle = calculate_angle(rHip, rKnee, rAnkle)
 
-    cv2.putText(image, f'Count: {counter}', (int(lShoulder[0]*width), max(0, int(lShoulder[1]*height - 20))),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-
-    # Sit-stand logic
-    if lAngle <= 155 and rAngle <= 155:
+    # Check if body is in view and the user is sitting
+    if noseVisible and hipsVisible and lAngle <= 155 and rAngle <= 155:
         stage = "sit"
-        # Start the timer if we haven't yet
-        if not timer_start:
-            timer_start = True
+
+        # If the test has not started yet, start the waiting time since the user is in position
+        if not userInPosition:
+            userInPosition = True
+            waiting_to_start = True
             start_time = time.time()
 
-    if lAngle >= 160 and rAngle >= 160 and stage == "sit":
-        stage = "stand"
-        counter += 1
+        # After the waiting period has passed, start the test
+        if waiting_to_start and (time.time() - start_time) >= waiting_time:
+            waiting_to_start = False
+            timer_start = True
+            start_time = time.time()  # Reset the timer
 
     if timer_start:
         elapsed = int(30 - (time.time() - start_time) * multiplier)
-        cv2.putText(image, f'Time: {elapsed}s',
-                    (int(lShoulder[0]*width), int(lShoulder[1]*height + 20)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    elif waiting_to_start:
+        elapsed = int(-waiting_time + (time.time() - start_time))
+    else:
+        elapsed = None
 
+    if userInPosition and timer_start and elapsed is not None:
         if elapsed <= 0:
             return None, counter
 
-    mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
-                              mp_drawing.DrawingSpec(thickness=2, circle_radius=2),
-                              mp_drawing.DrawingSpec(thickness=2, circle_radius=2))
+    # Increment the repetition counter when the stage changes from sit to stand
+    if timer_start and lAngle >= 160 and rAngle >= 160 and stage == "sit":
+        stage = "stand"
+        counter += 1
+
+    if userInPosition:
+        cv2.putText(image, f'Count: {counter}', (int(lShoulder[0]*width), max(0, int(lShoulder[1]*height - 20))),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(image, f'Time: {elapsed}s',
+                    (int(lShoulder[0]*width), int(lShoulder[1]*height + 20)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
+                          mp_drawing.DrawingSpec(thickness=2, circle_radius=2),
+                          mp_drawing.DrawingSpec(thickness=2, circle_radius=2))
 
     _, buffer = cv2.imencode('.jpg', image)
     return base64.b64encode(buffer).decode('utf-8'), counter
@@ -375,6 +397,8 @@ def handle_connect():
     timer_start = False
     start_time = None
     multiplier = 1
+    userInPosition = False
+    waiting_to_start = False
 
 @socketio.on('frame')
 def handle_frame(data):
