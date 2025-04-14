@@ -1,25 +1,23 @@
-import logo from './logo.svg';
-import './App.css';
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import LandingPage from './LandingPage';
+import UploadPage from './UploadPage';
+import HistoryPage from './HistoryPage';
+import RecordPage from './RecordPage';
+import LiveProcessingPage from './LiveProcessingPage';
 
-function App() {
+
+export default function App() {
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <Router>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/upload" element={<UploadPage />} />
+        <Route path="/history" element={<HistoryPage />} />
+        <Route path="/record" element={<RecordPage />} />
+        <Route path="/liveProcessing" element={<LiveProcessingPage />} />
+        
+      </Routes>
+    </Router>
   );
 }
-
-export default App;
