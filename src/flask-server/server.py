@@ -339,8 +339,9 @@ def process_frame(image):
                 if (lHipAngle <= 150 or rHipAngle <= 150):
                         
                         if distance1 <= 85 and distance2 <= 85:
+                            emit('play_sound', {'sound': 'test_started'}, broadcast=True)
                             begin_test = True
-                
+
 
     # Sit-stand logic
     if (lHipAngle <= 150 or rHipAngle <= 150) and begin_test:
@@ -353,6 +354,7 @@ def process_frame(image):
     if (lHipAngle >= 170 or rHipAngle >= 170) and begin_test and stage == "sit":
         stage = "stand"
         counter += 1
+        emit('play_sound', {'sound': 'rep_counted'}, broadcast=True)
 
     if timer_start:
         elapsed = int(30 - (time.time() - start_time) * multiplier)
@@ -448,12 +450,6 @@ def live_analyze_sit_stand():
         "processed": "Processed: " + processed_filename,
         "reps": "Reps: " + str(reps)
     }), 200
-
-
-def send_sound_command():
-        #time.sleep(2)
-        #sound_file = 
-        emit('play_sound', {'sound': 'notification'}, broadcast=True)
 
 @socketio.on('connect')
 def handle_connect():
