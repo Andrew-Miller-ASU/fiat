@@ -26,6 +26,7 @@ counter = 0
 timer_start = False
 start_time = None
 multiplier = 1
+begin_test = False
 
 def calculate_angle(a, b, c):
     """Utility to calculate joint angle between three points."""
