@@ -11,7 +11,6 @@ import time
 app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
-socketio.start_background_task(sound_emitter)
 
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
@@ -174,12 +173,12 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2
                 )
 
-                if not begin_test: 
+                if not begin_test:
 
-                    
+
 
                     if (lAngle <= 145 or rAngle <= 145):
-                        
+
                         if stage != "sit":
                             stage = "sit"
                             sitting_timer = time.time()
@@ -189,7 +188,7 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
                         stage = None
                         sitting_timer = time.time()
 
-                    
+
 
                 # Sit-stand logic
                 if (lAngle <= 150 or rAngle <= 150) and begin_test:
@@ -348,10 +347,10 @@ def process_frame(image):
 
     else: #If user's arms are crossed (hands on opposite shoulders), start test
 
-                    
+
                 """
                     if (lHipAngle <= 150 or rHipAngle <= 150):
-                        
+
                         if stage != "sit":
                             stage = "sit"
                             sitting_timer = time.time()
@@ -363,7 +362,7 @@ def process_frame(image):
                 """
                 if hipVisible and (lHipAngle <= 150 or rHipAngle <= 150):
                         current_stage = "sit"
-                        
+
                         if distance1 <= 85 and distance2 <= 85:
                             emit('play_sound', {'sound': 'test_started'}, broadcast=True)
                             begin_test = True
