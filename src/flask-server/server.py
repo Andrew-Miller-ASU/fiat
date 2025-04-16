@@ -11,6 +11,7 @@ import time
 app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
+socketio.start_background_task(sound_emitter)
 
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
@@ -21,7 +22,8 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # State variables
-stage = None
+last_stage = None
+current_stage = None
 counter = 0
 timer_start = False
 start_time = None
@@ -249,9 +251,7 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
     return counter
 
 def process_frame(image):
-    global stage, counter, timer_start, start_time, multiplier, begin_test, sitting_timer
-
-    #send_sound_command()
+    global last_stage, current_stage, counter, timer_start, start_time, multiplier, begin_test, sitting_timer
 
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     results = pose.process(image_rgb)
@@ -264,9 +264,9 @@ def process_frame(image):
 
     # Return the frame without incrementing the counter if neither the left nor right hip are in view
     # Ensures a repetition is not erroneously counted when only a user's upper body is visible
-    if not (landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].visibility > 0.75 or landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].visibility > 0.75):
-        _, buffer = cv2.imencode('.jpg', image)
-        return base64.b64encode(buffer).decode('utf-8'), counter
+    #if not (landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].visibility > 0.75 or landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].visibility > 0.75):
+    #    _, buffer = cv2.imencode('.jpg', image)
+    #    return base64.b64encode(buffer).decode('utf-8'), counter
 
 
     lShoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x,
@@ -302,8 +302,9 @@ def process_frame(image):
     #rElbowAngle = calculate_angle(rShoulder, rElbow, rWrist)
     distance1 = calculate_distance(lWrist, rShoulder)
     distance2 = calculate_distance(rWrist, lShoulder)
+    hipVisible = landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].visibility > 0.75 or landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].visibility > 0.75
 
-    cv2.putText(image, f'Count: {counter}, Stage: {stage}, Begin_test: {begin_test}', (int(lShoulder[0]*width), max(0, int(lShoulder[1]*height - 20))),
+    cv2.putText(image, f'Count: {counter}, Stage: {current_stage}, Begin_test: {begin_test}', (int(lShoulder[0]*width), max(0, int(lShoulder[1]*height - 20))),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
     """ Visualization: put the left knee angle as text
@@ -321,7 +322,31 @@ def process_frame(image):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2
                 )
     """
-    if not begin_test: #If user's arms are crossed (hands on opposite shoulders), start test
+    if begin_test:
+
+        # Start the timer if we haven't yet
+        if not timer_start:
+            timer_start = True
+            start_time = time.time()
+
+        # Detection of sit stage
+        if (lHipAngle <= 150 or rHipAngle <= 150):
+            last_stage = current_stage
+            current_stage = "sit"
+
+        # Detection of stand stage
+        if (lHipAngle >= 170 or rHipAngle >= 170):
+            last_stage = current_stage
+            current_stage = "stand"
+
+        # Detection of repetition completion (transition from sit to stand stage)
+        if last_stage == "sit" and current_stage == "stand":
+            last_stage = "stand"
+            current_stage = None    # Reset current_stage so that a repetition is never counted twice (user must return to the sitting stage before the above condition can be triggered again)
+            counter += 1
+            emit('play_sound', {'sound': 'rep_counted'}, broadcast=True)
+
+    else: #If user's arms are crossed (hands on opposite shoulders), start test
 
                     
                 """
@@ -336,25 +361,12 @@ def process_frame(image):
                         stage = None
                         sitting_timer = time.time()
                 """
-                if (lHipAngle <= 150 or rHipAngle <= 150):
+                if hipVisible and (lHipAngle <= 150 or rHipAngle <= 150):
+                        current_stage = "sit"
                         
                         if distance1 <= 85 and distance2 <= 85:
                             emit('play_sound', {'sound': 'test_started'}, broadcast=True)
                             begin_test = True
-
-
-    # Sit-stand logic
-    if (lHipAngle <= 150 or rHipAngle <= 150) and begin_test:
-        stage = "sit"
-        # Start the timer if we haven't yet
-        if not timer_start:
-            timer_start = True
-            start_time = time.time()
-
-    if (lHipAngle >= 170 or rHipAngle >= 170) and begin_test and stage == "sit":
-        stage = "stand"
-        counter += 1
-        emit('play_sound', {'sound': 'rep_counted'}, broadcast=True)
 
     if timer_start:
         elapsed = int(30 - (time.time() - start_time) * multiplier)
@@ -453,8 +465,9 @@ def live_analyze_sit_stand():
 
 @socketio.on('connect')
 def handle_connect():
-    global stage, counter, timer_start, start_time, multiplier, begin_test, sitting_timer
-    stage = None
+    global last_stage, current_stage, counter, timer_start, start_time, multiplier, begin_test, sitting_timer
+    last_stage = None
+    current_stage = None
     counter = 0
     timer_start = False
     start_time = None
