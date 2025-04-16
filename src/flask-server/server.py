@@ -363,7 +363,7 @@ def process_frame(image):
                 if hipVisible and (lHipAngle <= 150 or rHipAngle <= 150):
                         current_stage = "sit"
 
-                        if distance1 <= 85 and distance2 <= 85:
+                        if distance1 <= 150 and distance2 <= 150:
                             emit('play_sound', {'sound': 'test_started'}, broadcast=True)
                             begin_test = True
 
