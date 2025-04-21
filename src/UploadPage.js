@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import scores from './images/Sit-Stand-Scores.png';
-import io from 'socket.io-client';
+import './animations.css';
 
 export default function UploadPage() {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -9,43 +9,21 @@ export default function UploadPage() {
   const [analysisType, setAnalysisType] = useState('sit-stand');
   const fileInputRef = useRef(null);
   const [data, setData] = useState('');
-  const canvasRef = useRef(null);
+  
+  const [testConcluded, setTestConcluded] = useState(false);
+  const [testStarted, setTestStarted] = useState(false);
 
-    function Canvas() {
-
-
-       // useEffect(() => {
-            const canvas = canvasRef.current;
-            const context = canvas.getContext('2d');
-
-            // Example drawing: a blue rectangle
-            //context.fillStyle = 'lightblue';
-            context.fillRect(30, 30, 400, 400);
-       // context.drawImage(fileInputRef.current, 0, 0, canvas.width, canvas.height);
-
-            // Example drawing: a red circle
-            //context.beginPath();
-            //context.arc(300, 70, 50, 0, 2 * Math.PI);
-            //context.fillStyle = 'red';
-            //context.fill();
-            //context.closePath();
-
-            // Example drawing: text
-            //context.font = '20px Arial';
-            //context.fillStyle = 'black';
-            //context.fillText('Hello, Canvas!', 50, 150);
-
-        //}, []);
-
-        
-    }
+   
   function handleFileChange(event) {
     const file = event.target.files[0];
+    setSelectedFile(null);
+    setPreviewURL(null);
     if (!file) {
-      setSelectedFile(null);
-      setPreviewURL(null);
+      //setSelectedFile(null);
+      //setPreviewURL(null);
       return;
     }
+    
     setSelectedFile(file);
     setPreviewURL(URL.createObjectURL(file));
   }
@@ -55,7 +33,8 @@ export default function UploadPage() {
       alert('No file selected!');
       return;
     }
-
+    setTestConcluded(false);
+    setTestStarted(true);
     const formData = new FormData();
     formData.append('video', selectedFile);
     // Optional: pass an analysisType if your server code expects it:
@@ -74,20 +53,17 @@ export default function UploadPage() {
 
 
         setData(await response.json()); // This will be your output
+        
 
 
-      //const data = await response.json();
-      // e.g. data = { original: "myvideo.mp4", processed: "myvideo_processed.mp4", reps: 3 }
-      /*alert(
-        `Upload & Analysis Complete!
-         Original: ${data.original}
-         Processed: ${data.processed}
-         Reps Counted: ${data.reps}`
-      );*/
+      
 
       // Clear UI
       setSelectedFile(null);
       setPreviewURL(null);
+      setTestConcluded(true);
+      setTestStarted(false);
+
     } catch (error) {
       console.error('Error uploading/analyzing video:', error);
       alert('Error uploading video. Check console for details.');
@@ -98,7 +74,10 @@ export default function UploadPage() {
     fileInputRef.current.click();
   }
 
-    
+    const loader_animation = () => {
+
+        return <div className="loader_spin"></div>
+    };
 
     
 
@@ -128,39 +107,54 @@ export default function UploadPage() {
         onChange={handleFileChange}
       />
 
-      {previewURL && (
+      {previewURL && !testStarted && (
         <div style={{ marginTop: '20px' }}>
           <h4>Preview:</h4>
           <video src={previewURL} width="400" controls />
         </div>
       )}
 
-      {previewURL && (
+      {previewURL && !testStarted && (
         <div style={{ marginTop: '20px' }}>
           <button onClick={handleConfirmUpload}>Confirm Upload</button>
         </div>
       )}
+
+          
 
       <div style={{ marginTop: '30px' }}>
         <Link to="/">
           <button>Back to Main</button>
         </Link>
       </div>
-          {/*Canvas()*/}
-          {/*<canvas ref={canvasRef} width={800} height={800} /> */}
+
+      { testStarted && (
+
+              <div style={{ textAlign: 'center', marginTop: '60px' }}>
+                  {loader_animation()}
+                  Analysis in progress. This shouldn't take more than a few minutes.
+              </div>
+
+      )}
+          
           
 
-      <p>   {/* Output Results */}
-                <br/>
-                {data.success}
-                <br/><br/>
-                {data.original}
-                <br/><br/>
-                {data.processed}
-                <br/><br/>
-                {data.reps}
+          <p>   {/* Output Results */}
+              { testConcluded && (
+                  <div>
+                    <br/>
+                    {data.success}
+                    
+                    <br/><br/>
+                    <b>{data.reps}</b>
+                </div>
+              )}
       </p>
-      <img src={scores} alt="Below Average Scores Based on Age Group" /> {/* Scores image */}
+      {testConcluded && (
+
+          <img src={scores} alt="Below Average Scores Based on Age Group" /> 
+
+      )} {/* Scores image */}
     </div>
   );
 }
