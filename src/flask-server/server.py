@@ -37,12 +37,13 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # --------------------------------------------------------------------------------
 stage = None
 counter = 0
-timer_start = False #True or false for timer start. 
+timer_start = False # True or false for timer start. 
 start_time = None
-multiplier = 1 #Multiplier for fps
-sit_detected_time = None #When sit is deteced for voice logic
-countdown_in_progress = False #Countdown boolean for voice logic 
-in_test_phase = False #This is a state for voice logic 
+multiplier = 1 # Multiplier for fps
+sit_detected_time = None # When sit is deteced for voice logic
+countdown_in_progress = False # Countdown boolean for voice logic 
+in_test_phase = False # This is a state for voice logic 
+last_good_sit_time = None # This needs to exist for a buffer (in case a person shifts slighly)
 
 # --------------------------------------------------------------------------------
 # UTILS
@@ -73,6 +74,7 @@ def reset_state():
     sit_detected_time = None
     countdown_in_progress = False
     in_test_phase = False
+    last_good_sit_time = None
 
 # --------------------------------------------------------------------------------
 # SIT-STAND PROCESSOR (OFFLINE/BATCH) for /analyze or /live_analyze
@@ -247,6 +249,10 @@ def analyze_sit_stand():
     4) Saves processed video with '_processed'.
     5) Returns JSON with the result.
     """
+    
+    if landmark_frames == 0:
+        return warning
+    
     if 'video' not in request.files:
         return "No video file part in the request", 400
 
@@ -267,7 +273,6 @@ def analyze_sit_stand():
     warning = "Pose detected, all good!"
     if landmark_frames == 0:
         warning = "No pose detected in any frame. Please try again with better camera positioning or lighting."
-        return warning
 
     
 
@@ -323,7 +328,7 @@ def process_frame(image):
     Real-time (static_image_mode) posture detection for the live feed.
     """
     global stage, counter, timer_start, start_time, multiplier
-    global sit_detected_time, countdown_in_progress, in_test_phase
+    global sit_detected_time, countdown_in_progress, in_test_phase, last_good_sit_time
 
     # Convert to RGB for Mediapipe
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -380,19 +385,30 @@ def process_frame(image):
     # If test hasn't begun, detect a stable sit
     if not in_test_phase:
         if lAngle <= 155 and rAngle <= 155:
-            # if hips are consistently <155 for 2s, emit start_countdown
+            # Valid sit position is detected.
             if sit_detected_time is None:
                 sit_detected_time = time.time()
+                last_good_sit_time = time.time()
                 events.append("sit_detected")
-            elif time.time() - sit_detected_time > 2 and not countdown_in_progress:
+            else:
+                # Update the last time we saw a good sit position
+                last_good_sit_time = time.time()
+            # Once a full 5 seconds of sustained sit, start countdown if not already started.
+            if not countdown_in_progress and (time.time() - sit_detected_time > 3):
                 countdown_in_progress = True
                 events.append("start_countdown")
         else:
-            if sit_detected_time is not None:
-                # sit lost
-                sit_detected_time = None
-                countdown_in_progress = False
-                events.append("sit_lost")
+            # Posture not in a proper sit.
+            if countdown_in_progress:
+                # If we're in a countdown, allow a 1-second grace period
+                if last_good_sit_time is not None and (time.time() - last_good_sit_time > 0.5):
+                    sit_detected_time = None
+                    countdown_in_progress = False
+                    events.append("sit_lost")
+            else:
+                if sit_detected_time is not None:
+                    sit_detected_time = None
+                    events.append("sit_lost")
 
     # If test started, do the usual 30s countdown logic
     if timer_start and in_test_phase:
@@ -409,7 +425,7 @@ def process_frame(image):
 
         # Track the sit→stand transitions
         global stage
-        if lAngle >= 160 and rAngle >= 160 and stage == "sit":
+        if lAngle >= 165 and rAngle >= 165 and stage == "sit":
             stage = "stand"
             counter += 1
         elif lAngle <= 155 and rAngle <= 155:
@@ -418,9 +434,10 @@ def process_frame(image):
         if elapsed <= 5:
             events.append("final_countdown")
         if elapsed <= 0:
+            final_count = counter
             reset_state()
             events.append("test_complete")
-            return None, counter, events
+            return None, final_count, events
 
     # Draw pose
     mp_drawing.draw_landmarks(

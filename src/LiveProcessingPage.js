@@ -71,7 +71,7 @@ const LiveProcessingPage = () => {
           }, 'image/jpeg');
         };
 
-        intervalRef.current = setInterval(sendFrame, 100);
+        intervalRef.current = setInterval(sendFrame, 200);
       } catch (err) {
         console.error("Error accessing webcam:", err);
       }
