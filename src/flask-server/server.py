@@ -364,7 +364,7 @@ def process_frame(image):
                         current_stage = "sit"
 
                         if distance1 <= 150 and distance2 <= 150:
-                            emit('play_sound', {'sound': 'test_started'}, broadcast=True)
+                            emit('play_sound', {'sound': 'countdown'}, broadcast=True)
                             begin_test = True
 
     if timer_start:
