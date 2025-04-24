@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 import mediapipe as mp
 import time
+from mediapipe.framework.formats import landmark_pb2
 
 app = Flask(__name__)
 CORS(app)
@@ -250,6 +251,10 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
     return counter
 
 def process_frame(image):
+    """During live processing, this function will be called once for every input frame recorded on the front-end. It handles
+    tracking of the test stage (sit or stand), timer, and repetition count using global state variables. It returns the analyzed
+    frame as output."""
+
     global last_stage, current_stage, counter, timer_start, start_time, multiplier, begin_test, sitting_timer
 
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -345,40 +350,55 @@ def process_frame(image):
             counter += 1
             emit('play_sound', {'sound': 'rep_counted'}, broadcast=True)
 
-    else: #If user's arms are crossed (hands on opposite shoulders), start test
+    else: # If the test has not started yet, check conditions to see if it should be started
+        # Sit detection
+        if hipVisible and (lHipAngle <= 150 or rHipAngle <= 150):
+                current_stage = "sit"
 
-
-                """
-                    if (lHipAngle <= 150 or rHipAngle <= 150):
-
-                        if stage != "sit":
-                            stage = "sit"
-                            sitting_timer = time.time()
-                        elif (time.time() - sitting_timer >= 3):
-                            begin_test = True
-                    else:
-                        stage = None
-                        sitting_timer = time.time()
-                """
-                if hipVisible and (lHipAngle <= 150 or rHipAngle <= 150):
-                        current_stage = "sit"
-
-                        if distance1 <= 150 and distance2 <= 150:
-                            emit('play_sound', {'sound': 'countdown'}, broadcast=True)
-                            begin_test = True
+                # Check if the user's arms are crossed with hands touching the shoulders
+                if distance1 <= 150 and distance2 <= 150:
+                    emit('play_sound', {'sound': 'countdown'}, broadcast=True)  # Play 3-second countdown and "test started" notification
+                    begin_test = True                                           # Start the test
 
     if timer_start:
-        elapsed = int(30 - (time.time() - start_time) * multiplier)
-        cv2.putText(image, f'Time: {elapsed}s',
+        time_remaining = int(30 - (time.time() - start_time) * multiplier)
+
+        # Display the value of the timer on the screen
+        cv2.putText(image, f'Time: {time_remaining}s',
                     (int(lShoulder[0]*width), int(lShoulder[1]*height + 20)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-        if elapsed <= 0:
+        if time_remaining <= 0:
             return None, counter
 
-    mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
-                              mp_drawing.DrawingSpec(thickness=2, circle_radius=2),
-                              mp_drawing.DrawingSpec(thickness=2, circle_radius=2))
+    # Pose landmarks that will be shown in the output frame
+    pose_landmarks_to_show = [
+        # Exclude all landmarks above the shoulder
+        lmk if idx >= mp_pose.PoseLandmark.LEFT_SHOULDER.value else None
+        for idx, lmk in enumerate(results.pose_landmarks.landmark)
+    ]
+
+    filtered_landmarks = landmark_pb2.NormalizedLandmarkList(
+        landmark=[
+            lmk if lmk is not None else landmark_pb2.NormalizedLandmark()
+            for lmk in pose_landmarks_to_show
+        ]
+    )
+
+    # Pose connections that will be shown on the output frame
+    pose_connections_to_show = [
+        conn for conn in mp_pose.POSE_CONNECTIONS
+        # Exclude all connections above the shoulder
+        if conn[0] >= mp_pose.PoseLandmark.LEFT_SHOULDER.value and conn[1] >= mp_pose.PoseLandmark.LEFT_SHOULDER.value
+    ]
+
+    mp_drawing.draw_landmarks(
+        image,
+        filtered_landmarks,
+        pose_connections_to_show,
+        mp_drawing.DrawingSpec(thickness=2, circle_radius=2),
+        mp_drawing.DrawingSpec(thickness=2, circle_radius=2)
+    )
 
     _, buffer = cv2.imencode('.jpg', image)
     return base64.b64encode(buffer).decode('utf-8'), counter
