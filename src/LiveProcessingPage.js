@@ -92,9 +92,9 @@ const LiveProcessingPage = () => {
             <h2>Live Processing</h2>
             <p>
                 1. Allow the Frailty Indicator Analysis Tool to access your webcam. <br/><br/>
-                2. Get in the proper position for performing the sit-stand test. Ensure that you are not too close to the camera,
-                and that your whole body is within frame.<br/><br/>
-                3. Begin performing the test. The 30-second timer will start counting down automatically.<br/><br/>
+                2. Get in the proper position for performing the sit-stand test. Ensure that your entire body is within the video frame (it's okay if your
+                feet are not visible). Your body should be centered in the recording frame.<br/><br/>
+                3. Cross your arms and place your hands on your shoulders. Your test will begin automatically after a 3-second countdown.<br/><br/>
             </p>
             <br/>
             <p><strong>Reps:</strong> {reps}</p>

@@ -371,7 +371,7 @@ def process_frame(image):
         if time_remaining <= 0:
             return None, counter
 
-    # Pose landmarks that will be shown in the output frame
+    # Pose landmarks that will be shown on the output frame
     pose_landmarks_to_show = [
         # Exclude all landmarks above the shoulder
         lmk if idx >= mp_pose.PoseLandmark.LEFT_SHOULDER.value else None
