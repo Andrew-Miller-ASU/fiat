@@ -29,6 +29,7 @@ timer_start = False
 start_time = None
 multiplier = 1
 begin_test = False
+countdown_in_progress = False
 
 def calculate_angle(a, b, c):
     """Utility to calculate joint angle between three points."""
@@ -255,7 +256,7 @@ def process_frame(image):
     tracking of the test stage (sit or stand), timer, and repetition count using global state variables. It returns the analyzed
     frame as output."""
 
-    global last_stage, current_stage, counter, timer_start, start_time, multiplier, begin_test, sitting_timer
+    global last_stage, current_stage, counter, timer_start, start_time, multiplier, begin_test, countdown_in_progress, sitting_timer
 
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     results = pose.process(image_rgb)
@@ -350,7 +351,7 @@ def process_frame(image):
             counter += 1
             emit('play_sound', {'sound': 'rep_counted'}, broadcast=True)
 
-    else: # If the test has not started yet, check conditions to see if it should be started
+    elif not countdown_in_progress: # If the test has not started yet, check conditions to see if it should be started
         # Sit detection
         if hipVisible and (lHipAngle <= 150 or rHipAngle <= 150):
                 current_stage = "sit"
@@ -358,6 +359,9 @@ def process_frame(image):
                 # Check if the user's arms are crossed with hands touching the shoulders
                 if distance1 <= 150 and distance2 <= 150:
                     emit('play_sound', {'sound': 'countdown'}, broadcast=True)  # Play 3-second countdown and "test started" notification
+                    countdown_in_progress = True
+                    time.sleep(3)
+                    countdown_in_progress = False
                     begin_test = True                                           # Start the test
 
     if timer_start:
@@ -492,6 +496,7 @@ def handle_connect():
     start_time = None
     multiplier = 1
     begin_test = False
+    countdown_in_progress = False
     sitting_timer = None
 
 @socketio.on('frame')
