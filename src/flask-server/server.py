@@ -27,9 +27,9 @@ current_stage = None
 counter = 0
 timer_start = False
 start_time = None
-multiplier = 1
 begin_test = False
-countdown_in_progress = False
+countdown_started = False
+countdown_start_time = None
 
 def calculate_angle(a, b, c):
     """Utility to calculate joint angle between three points."""
@@ -256,14 +256,16 @@ def process_frame(image):
     tracking of the test stage (sit or stand), timer, and repetition count using global state variables. It returns the analyzed
     frame as output."""
 
-    global last_stage, current_stage, counter, timer_start, start_time, multiplier, begin_test, countdown_in_progress, sitting_timer
+    global last_stage, current_stage, counter, timer_start, start_time, begin_test, countdown_started, countdown_start_time
+
+    sound_to_play = None
 
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     results = pose.process(image_rgb)
 
     if not results.pose_landmarks:
         _, buffer = cv2.imencode('.jpg', image)
-        return base64.b64encode(buffer).decode('utf-8'), counter
+        return base64.b64encode(buffer).decode('utf-8'), counter, False, None
 
     landmarks = results.pose_landmarks.landmark
 
@@ -336,36 +338,37 @@ def process_frame(image):
 
         # Detection of sit stage
         if (lHipAngle <= 150 or rHipAngle <= 150):
-            last_stage = current_stage
             current_stage = "sit"
-
         # Detection of stand stage
-        if (lHipAngle >= 170 or rHipAngle >= 170):
-            last_stage = current_stage
+        elif (lHipAngle >= 165 or rHipAngle >= 165):
             current_stage = "stand"
 
         # Detection of repetition completion (transition from sit to stand stage)
         if last_stage == "sit" and current_stage == "stand":
-            last_stage = "stand"
-            current_stage = None    # Reset current_stage so that a repetition is never counted twice (user must return to the sitting stage before the above condition can be triggered again)
             counter += 1
-            emit('play_sound', {'sound': 'rep_counted'}, broadcast=True)
+            sound_to_play = "rep_counted"
 
-    elif not countdown_in_progress: # If the test has not started yet, check conditions to see if it should be started
-        # Sit detection
-        if hipVisible and (lHipAngle <= 150 or rHipAngle <= 150):
+        last_stage = current_stage
+
+    else: # If the test has not started yet, check conditions to see if it should be started
+
+        if countdown_started and (time.time() - countdown_start_time >= 3):
+            countdown_started = False
+            begin_test = True
+
+        if not countdown_started:
+            # Sit detection
+            if hipVisible and (lHipAngle <= 150 or rHipAngle <= 150):
                 current_stage = "sit"
 
                 # Check if the user's arms are crossed with hands touching the shoulders
                 if distance1 <= 150 and distance2 <= 150:
-                    emit('play_sound', {'sound': 'countdown'}, broadcast=True)  # Play 3-second countdown and "test started" notification
-                    countdown_in_progress = True
-                    time.sleep(3)
-                    countdown_in_progress = False
-                    begin_test = True                                           # Start the test
+                    sound_to_play = "countdown"  # Play 3-second countdown and "test started" notification
+                    countdown_started = True
+                    countdown_start_time = time.time()
 
     if timer_start:
-        time_remaining = int(30 - (time.time() - start_time) * multiplier)
+        time_remaining = int(30 - (time.time() - start_time))
 
         # Display the value of the timer on the screen
         cv2.putText(image, f'Time: {time_remaining}s',
@@ -373,7 +376,7 @@ def process_frame(image):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
         if time_remaining <= 0:
-            return None, counter
+            return None, counter, True, None
 
     # Pose landmarks that will be shown on the output frame
     pose_landmarks_to_show = [
@@ -405,7 +408,7 @@ def process_frame(image):
     )
 
     _, buffer = cv2.imencode('.jpg', image)
-    return base64.b64encode(buffer).decode('utf-8'), counter
+    return base64.b64encode(buffer).decode('utf-8'), counter, hipVisible, sound_to_play
 
 @app.route('/videos', methods=['GET'])
 def list_videos():
@@ -488,16 +491,15 @@ def live_analyze_sit_stand():
 
 @socketio.on('connect')
 def handle_connect():
-    global last_stage, current_stage, counter, timer_start, start_time, multiplier, begin_test, sitting_timer
+    global last_stage, current_stage, counter, timer_start, start_time, begin_test, countdown_started, countdown_start_time
     last_stage = None
     current_stage = None
     counter = 0
     timer_start = False
     start_time = None
-    multiplier = 1
     begin_test = False
-    countdown_in_progress = False
-    sitting_timer = None
+    countdown_started = False
+    countdown_start_time = None
 
 @socketio.on('frame')
 def handle_frame(data):
@@ -506,11 +508,13 @@ def handle_frame(data):
     frame = base64.b64decode(data)
     np_img = np.frombuffer(frame, dtype=np.uint8)
     image = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
-    processed_frame, reps = process_frame(image)
+    processed_frame, reps, hipVisible, sound_to_play = process_frame(image)
 
     emit('processed_frame', {
         'image': processed_frame,
-        'reps': reps
+        'reps': reps,
+        'hipVisible': hipVisible,
+        'sound': sound_to_play
     })
 
 if __name__ == '__main__':

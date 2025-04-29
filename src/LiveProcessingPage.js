@@ -6,6 +6,26 @@ import { Link } from "react-router-dom";
 const socket = io('http://localhost:5000');
 socket.io.opts.forceNew = true;
 
+const warningStyle = {
+    backgroundColor: 'red',
+    color: 'white',
+    fontWeight: 'bold',
+    borderRadius: '12px',
+    padding: '10px 20px',
+    fontSize: '18px',
+    width: '960px',
+    margin: '10px auto',
+    opacity: 0,
+    transition: 'opacity 0.5s ease-in-out',
+    pointerEvents: 'none',
+    zIndex: 1000,
+};
+
+const visibleWarningStyle = {
+    ...warningStyle,
+    opacity: 1,
+};
+
 const LiveProcessingPage = () => {
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
@@ -14,6 +34,7 @@ const LiveProcessingPage = () => {
 
     const [processedFrame, setProcessedFrame] = useState(null);
     const [reps, setReps] = useState(0);
+    const [hipVisible, setHipVisible] = useState(null);
     const [sessionEnded, setSessionEnded] = useState(false);
 
     useEffect(() => {
@@ -67,10 +88,16 @@ const LiveProcessingPage = () => {
             if (data.image === null) {
                 setSessionEnded(true);
                 setProcessedFrame(null);
+                setHipVisible(null);
                 return;
             }
             setProcessedFrame(`data:image/jpeg;base64,${data.image}`);
             setReps(data.reps);
+            setHipVisible(data.hipVisible);
+
+            if (data.sound) {
+                playSound(data.sound);
+            }
         });
 
         return () => {
@@ -101,6 +128,12 @@ const LiveProcessingPage = () => {
 
             <video ref={videoRef} width="960" height="720" style={{ display: 'none' }} />
             <canvas ref={canvasRef} width="960" height="720" style={{ display: 'none' }} />
+
+            {hipVisible === false && (
+                <div style={visibleWarningStyle}>
+                    Please move back so that your whole body is visible!
+                </div>
+            )}
 
             {processedFrame && (
                 <img
