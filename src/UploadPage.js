@@ -9,30 +9,79 @@ export default function UploadPage() {
   const [analysisType, setAnalysisType] = useState('sit-stand');
   const fileInputRef = useRef(null);
   const [data, setData] = useState('');
-  
+  const [approvedSelection, setApprovedSelection] = useState(true);
   const [testConcluded, setTestConcluded] = useState(false);
   const [testStarted, setTestStarted] = useState(false);
 
-   
-  function handleFileChange(event) {
-    const file = event.target.files[0];
-    setSelectedFile(null);
-    setPreviewURL(null);
-    if (!file) {
-      //setSelectedFile(null);
-      //setPreviewURL(null);
-      return;
+
+    function handleClickChooseFile() {
+        fileInputRef.current.click();
     }
-    
-    setSelectedFile(file);
-    setPreviewURL(URL.createObjectURL(file));
-  }
+   
+    function handleFileChange(event) {
+        const file = event.target.files[0];
+        setSelectedFile(null);
+        setPreviewURL(null);
+        if (!file) {
+            //setSelectedFile(null);
+            //setPreviewURL(null);
+            return;
+        }
+
+        let video = document.createElement('video');
+        video.preload = 'metadata';
+        video.src = URL.createObjectURL(file);
+        
+
+        video.onloadedmetadata = function () {
+
+            window.URL.revokeObjectURL(this.src);
+            
+
+            if (video.duration < 30) {
+
+                
+                setApprovedSelectionToFalse();
+            }
+            else {
+
+                setApprovedSelectionToTrue();
+            }
+        }
+       
+        
+        
+
+        setSelectedFile(file);
+        setPreviewURL(URL.createObjectURL(file));
+
+
+    };
+
+    function setApprovedSelectionToFalse() {
+
+        setApprovedSelection(false);
+    }
+
+    function setApprovedSelectionToTrue() {
+
+        setApprovedSelection(true);
+    }
 
   async function handleConfirmUpload() {
+  
     if (!selectedFile) {
       alert('No file selected!');
       return;
     }
+    if (!approvedSelection) {
+        alert("Selected video is too short. Please ensure selected video is at least 30 seconds.");
+       return;
+    }
+    
+
+      
+
     setTestConcluded(false);
     setTestStarted(true);
     const formData = new FormData();
@@ -70,20 +119,27 @@ export default function UploadPage() {
     }
   }
 
+  /*
   function handleClickChooseFile() {
     fileInputRef.current.click();
   }
-
+  */
     const loader_animation = () => {
 
         return <div className="loader_spin"></div>
     };
-
+    
     
 
   return (
     <div style={{ textAlign: 'center', marginTop: '60px' }}>
-      <h2>Upload & Analyze Your Video</h2>
+          <h2>Upload & Analyze Your Video</h2>
+            <h3>Instructions</h3>
+          <p>If you have a video of yourself performing the sit-stand test for 30 seconds, <br/>
+              you can upload it here to be analyzed. <br /> Start by clicking the "choose video" button and uploading <br />
+              your video. Remember, it must be at least 30 seconds for optimal results. <br /> The test will begin once
+              you are in the sitting position. <br /> The Frailty Indicator Analysis Tool will conclude your test after 30 seconds, <br />
+          so do not worry about your video's duration. It just needs to be at least 30 seconds. </p>
       <p>Select a video file to be processed.</p>
 
       {/* Analysis selection (currently just one type, but you could add more) */}
@@ -110,7 +166,7 @@ export default function UploadPage() {
       {previewURL && !testStarted && (
         <div style={{ marginTop: '20px' }}>
           <h4>Preview:</h4>
-          <video src={previewURL} width="400" controls />
+                  <video src={previewURL} width="400" controls />
         </div>
       )}
 
