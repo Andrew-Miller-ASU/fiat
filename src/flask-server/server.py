@@ -59,9 +59,10 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
     Returns final repetition count.
     Important note: live_or_upload should be a string, live for live recordings and
     upload for uploaded video. This is how the function will know whether to adjust for
-    frame rate or not. Adjustment is unnecessary for live videos.
+    frame rate or not. Adjustment is unnecessary for live videos. For now, only the uploaded
+    videos will use this function. The live processing is done by process_frame.
     """
-    cap = cv2.VideoCapture(input_path)      # This will be an int 0 for live processing and a filepath for uploaded videos.
+    cap = cv2.VideoCapture(input_path)      # This would be an int 0 for webcam and a filepath for uploaded videos.
 
     # Prepare output video writer
     fourcc = cv2.VideoWriter_fourcc(*'H264')
@@ -75,7 +76,7 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
 
     out = cv2.VideoWriter(output_path, fourcc, fps_in, (width, height))
 
-    counter = 0
+    uploaded_reps = 0
     stage = None
     timer_start = False
     start_time = None
@@ -86,6 +87,7 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
 
     frames = 0
     multiplier = 1
+    previous_stage = None
 
     with mp_pose.Pose(
         min_detection_confidence=0.5,
@@ -109,11 +111,12 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
                 fps = frames / (fps_current_time - fps_start_time)
 
                 multiplier = fps / 30
-
+            
+            
             # Recolor image to RGB
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image.flags.writeable = False
-
+            
             # Pose detection
             results = pose.process(image)
 
@@ -128,6 +131,10 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
                 lShoulder = [
                     landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x,
                     landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y
+                ]
+                rShoulder = [
+                    landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x,
+                    landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y
                 ]
                 lHip = [
                     landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x,
@@ -153,21 +160,26 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
                     landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].x,
                     landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y
                 ]
-
+                lWrist = [
+                    landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value].x,
+                    landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value].y
+                ]
+                rWrist = [
+                    landmarks[mp_pose.PoseLandmark.RIGHT_WRIST.value].x,
+                    landmarks[mp_pose.PoseLandmark.RIGHT_WRIST.value].y
+                ]
                 # Calculate angles
                 lAngle = calculate_angle(lHip, lKnee, lAnkle)
                 rAngle = calculate_angle(rHip, rKnee, rAnkle)
 
-                """ Visualization: put the left knee angle as text
-                cv2.putText(
-                    image,
-                    f'{int(lAngle)}',
-                    tuple(np.multiply(lKnee, [width, height]).astype(int)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2
-                )
-                    """
+                distance1 = calculate_distance(lWrist, rShoulder)
+                distance2 = calculate_distance(rWrist, lShoulder)
+                hipVisible = landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].visibility > 0.75 or landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].visibility > 0.75
+
+
+                
                 # Show rep count near left shoulder
-                counter_text = f"Count: {counter}"
+                counter_text = f"Count: {uploaded_reps}, Distance1: {distance1}, Distance2: {distance2}"
                 cv2.putText(
                     image,
                     counter_text,
@@ -178,7 +190,16 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
                 if not begin_test:
 
 
+                    if hipVisible and (lAngle <= 150 or rAngle <= 150):
+                        stage = "sit"
 
+                        if distance1 <= 150 and distance2 <= 150:
+                            
+                            begin_test = True
+                    else:
+                        stage = "stand"
+
+                    """
                     if (lAngle <= 145 or rAngle <= 145):
 
                         if stage != "sit":
@@ -189,20 +210,21 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
                     else:
                         stage = None
                         sitting_timer = time.time()
-
+                    """
 
 
                 # Sit-stand logic
-                if (lAngle <= 150 or rAngle <= 150) and begin_test:
-                    stage = "sit"
-                    # Start the timer if we haven't yet
-                    if not timer_start:
-                        timer_start = True
-                        start_time = time.time()
+                if hipVisible:
+                    if (lAngle <= 150 or rAngle <= 150) and begin_test:
+                        stage = "sit"
+                        # Start the timer if we haven't yet
+                        if not timer_start:
+                            timer_start = True
+                            start_time = time.time()
 
-                if (lAngle >= 170 or rAngle >= 170) and stage == "sit" and begin_test:
-                    stage = "stand"
-                    counter += 1
+                    if (lAngle >= 170 or rAngle >= 170) and stage == "sit" and begin_test:
+                        stage = "stand"
+                        uploaded_reps += 1
 
                 # If we have been in the "sit" stage for more than 30s, break out
                 if timer_start:
@@ -221,7 +243,7 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
                         # We can stop analysis here if desired
                         time.sleep(3)
                         break
-
+            
             except:
                 pass
 
@@ -235,13 +257,13 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
                     mp_drawing.DrawingSpec(thickness=2, circle_radius=2)
                 )
 
-            cv2.imshow('Frailty Indicator Analysis Tool', image)        # Show the video or live processing
+            #cv2.imshow('Frailty Indicator Analysis Tool', image)        # Show the video or live processing
 
             if cv2.waitKey(10) & 0xFF == ord('q'):
                 break
 
             # Write the annotated frame to output
-            out.write(image)
+        out.write(image)
 
         cap.release()
         out.release()
@@ -249,7 +271,7 @@ def sit_stand_processor(input_path, output_path, live_or_upload):
                                         # Without this, you'll have an error that causes the server to be unable to process
                                         # videos sequentually.
 
-    return counter
+    return uploaded_reps
 
 def process_frame(image):
     """During live processing, this function will be called once for every input frame recorded on the front-end. It handles
@@ -461,33 +483,7 @@ def analyze_sit_stand():
     }), 200
 
 
-@app.route('/live_analyze')
-def live_analyze_sit_stand():
-    """
-    Single endpoint that:
-      1) Prepares a video filename using the date and time for a live processing.
-      2) Performs the Mediapipe analysis headlessly.
-      3) Saves processed video with "_processed" appended.
-      4) Returns JSON: { original: "...", processed: "...", reps: N }
-    """
 
-
-    # Build output filename
-    # e.g. myvideo.mp4 => myvideo_processed.mp4
-    name = "live_video_" + str(date.today()) + "_" + str(int(time.time()))
-    ext = ".mp4"
-    processed_filename = f"{name}_processed{ext}"
-    processed_path = os.path.join(app.config['UPLOAD_FOLDER'], processed_filename)
-
-    # Run analysis
-    reps = sit_stand_processor(0, processed_path, "live")
-
-    return jsonify({
-        "success": "Live Analysis Complete!",
-        "original": "Original: webcam recording",
-        "processed": "Processed: " + processed_filename,
-        "reps": "Reps: " + str(reps)
-    }), 200
 
 @socketio.on('connect')
 def handle_connect():
