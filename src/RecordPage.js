@@ -1,8 +1,8 @@
 import React, { useRef, useState, useEffect } from "react";
 import Webcam from "react-webcam";
 import axios from "axios";
-import "./animations.css"; // for loader_spin CSS
-import SitStandScores from "./images/Sit-Stand-Scores.png"; // adjust if needed
+import "./animations.css";
+import SitStandScores from "./images/Sit-Stand-Scores.png";
 
 const RecordPage = () => {
   const webcamRef = useRef(null);
