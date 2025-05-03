@@ -86,11 +86,10 @@ export default function UploadPage() {
     setTestStarted(true);
     const formData = new FormData();
     formData.append('video', selectedFile);
-    // Optional: pass an analysisType if your server code expects it:
     formData.append('analysisType', analysisType);
       //Canvas();
     try {
-      // POST to your new '/analyze' endpoint (instead of '/upload')
+      // POST to the '/analyze' endpoint
       const response = await fetch('http://127.0.0.1:5000/analyze', {
         method: 'POST',
         body: formData,
@@ -101,7 +100,7 @@ export default function UploadPage() {
       }
 
 
-        setData(await response.json()); // This will be your output
+        setData(await response.json()); // Output
         
 
 
@@ -142,7 +141,7 @@ export default function UploadPage() {
           so do not worry about your video's duration. It just needs to be at least 30 seconds. </p>
       <p>Select a video file to be processed.</p>
 
-      {/* Analysis selection (currently just one type, but you could add more) */}
+      {/* Analysis selection */}
       <label htmlFor="analysisSelect">Choose Analysis Type:</label>
       <select
         id="analysisSelect"
@@ -151,7 +150,6 @@ export default function UploadPage() {
         style={{ marginLeft: '10px', marginRight: '20px' }}
       >
         <option value="sit-stand">Sit-Stand</option>
-        {/* Add other analysis types here */}
       </select>
 
       <button onClick={handleClickChooseFile}>Choose Video</button>
