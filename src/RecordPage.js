@@ -1,160 +1,211 @@
-import React, { useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useRef, useState, useEffect } from "react";
+import Webcam from "react-webcam";
+import axios from "axios";
+import "./animations.css"; // for loader_spin CSS
+import SitStandScores from "./images/Sit-Stand-Scores.png"; // adjust if needed
 
-export default function RecordPage() {
+const RecordPage = () => {
+  const webcamRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
   const [recording, setRecording] = useState(false);
-  const [mediaStream, setMediaStream] = useState(null);
-  const [mediaRecorder, setMediaRecorder] = useState(null);
-  const [videoChunks, setVideoChunks] = useState([]);
-  const [videoURL, setVideoURL] = useState(null);
+  const [videoBlob, setVideoBlob] = useState(null);
+  const [time, setTime] = useState(30);
+  const timerRef = useRef(null);
+  const [error, setError] = useState("");
+  const [webcamAvailable, setWebcamAvailable] = useState(true);
+  const [uploadStatus, setUploadStatus] = useState("");
+  const [processingResult, setProcessingResult] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [testConcluded, setTestConcluded] = useState(false);
 
-  const [analysisType, setAnalysisType] = useState('sit-stand'); // NEW
+  useEffect(() => {
+    navigator.mediaDevices.getUserMedia({ video: true })
+        .then(() => setWebcamAvailable(true))
+        .catch(() => {
+          setWebcamAvailable(false);
+          setError("No webcam detected. Please connect a webcam to use this feature.");
+        });
+  }, []);
 
-  const videoRef = useRef(null);
-
-  async function startRecording() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      setMediaStream(stream);
-      videoRef.current.srcObject = stream;
-
-      const recorder = new MediaRecorder(stream);
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          setVideoChunks((prev) => [...prev, event.data]);
-        }
-      };
-
-      recorder.start();
-      setMediaRecorder(recorder);
-      setRecording(true);
-    } catch (error) {
-      console.error('Error accessing camera/mic:', error);
-      alert('Could not access camera or microphone.');
-    }
-  }
-
-  function stopRecording() {
-    if (mediaRecorder) {
-      mediaRecorder.stop();
-      setRecording(false);
-    }
-    if (mediaStream) {
-      mediaStream.getTracks().forEach((track) => track.stop());
-    }
-  }
-
-  function handleSaveVideo() {
-    if (videoChunks.length) {
-      const blob = new Blob(videoChunks, { type: 'video/webm' });
-      const url = URL.createObjectURL(blob);
-      setVideoURL(url);
-    }
-  }
-
-  async function handleUpload() {
-    if (!videoURL) {
-      alert('No recorded video to upload.');
+  const startRecording = () => {
+    if (!webcamRef.current || !webcamRef.current.stream) {
+      setError("No webcam stream found. Please allow webcam access.");
       return;
     }
 
-    // Create a File from the in-memory chunks
-    const blob = new Blob(videoChunks, { type: 'video/webm' });
-    const file = new File([blob], `recorded-video-${Date.now()}.webm`, { type: 'video/webm' });
+    setRecording(true);
+    setVideoBlob(null);
+    setTime(30);
+    setError("");
+    setTestConcluded(false);
 
-    const formData = new FormData();
-    formData.append('video', file);
-    // Pass the chosen analysis type:
-    formData.append('analysisType', analysisType);
+    timerRef.current = setInterval(() => {
+      setTime((prevTime) => {
+        if (prevTime === 1) {
+          stopRecording();
+        }
+        return prevTime - 1;
+      });
+    }, 1000);
 
     try {
-      // POST to '/analyze' (instead of '/upload') so we get processed videos
-      const response = await fetch('http://127.0.0.1:5000/analyze', {
-        method: 'POST',
-        body: formData,
+      const stream = webcamRef.current.stream;
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+      let recordedChunks = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        clearInterval(timerRef.current);
+        const blob = new Blob(recordedChunks, { type: "video/webm" });
+        setVideoBlob(blob);
+      };
+
+      mediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.start();
+    } catch (error) {
+      setError("Error initializing recording. Please try again.");
+      console.error("Error initializing MediaRecorder:", error);
+    }
+  };
+
+  const stopRecording = () => {
+    setRecording(false);
+    clearInterval(timerRef.current);
+    if (mediaRecorderRef.current?.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const uploadToServer = async () => {
+    if (!videoBlob) {
+      setUploadStatus("No video available to upload.");
+      return;
+    }
+
+    setUploadStatus("Uploading...");
+    setIsProcessing(true);
+    setTestConcluded(false);
+
+    const formData = new FormData();
+    formData.append("video", videoBlob, "sit-stand-test.webm");
+    formData.append("analysisType", "sit-stand");
+
+    try {
+      const response = await axios.post("http://127.0.0.1:5000/analyze", formData, {
+        headers: { "Content-Type": "multipart/form-data" }
       });
 
-      if (!response.ok) {
+      if (response.status !== 200) {
         throw new Error(`Server error: ${response.status}`);
       }
 
-      const data = await response.json();
-      // e.g. data = { original: "myvideo.webm", processed: "myvideo_processed.webm", reps: 3 }
-      alert(`
-        Upload & Analysis Complete!
-        Original: ${data.original}
-        Processed: ${data.processed}
-        Reps Counted: ${data.reps}
-      `);
-
-      // Clear out state so user can record again
-      setVideoURL(null);
-      setVideoChunks([]);
+      setProcessingResult(response.data);
+      setUploadStatus("Processing complete!");
+      setIsProcessing(false);
+      setTestConcluded(true);
     } catch (error) {
-      console.error('❌ Upload error:', error);
-      alert('Error uploading video.');
+      console.error("Error uploading/analyzing video:", error);
+      setUploadStatus("Upload failed. Please try again.");
+      setIsProcessing(false);
     }
-  }
+  };
+
+  const downloadVideo = () => {
+    if (videoBlob) {
+      const url = URL.createObjectURL(videoBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "sit-stand-test.webm";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  };
+
+  const loader_animation = () => (
+      <div style={{ marginTop: "40px", textAlign: "center" }}>
+        <div className="loader_spin" />
+        <p>Analysis in progress. This shouldn't take more than a few minutes.</p>
+      </div>
+  );
 
   return (
-    <div style={{ textAlign: 'center', marginTop: '60px' }}>
-      <h2>Record Your Video</h2>
-      <p>Click "Start Recording" to begin, then "Stop Recording" to finish.</p>
+      <div style={{ textAlign: "center", padding: "20px", maxWidth: "1000px", margin: "auto" }}>
+        <h1 style={{ fontSize: "2rem", fontWeight: "bold", marginBottom: "20px" }}>
+          Record Your Sit-Stand Test
+        </h1>
 
-      {/* Choose the type of analysis, similar to UploadPage */}
-      <div style={{ marginBottom: '20px' }}>
-        <label htmlFor="analysisType">Analysis Type: </label>
-        <select
-          id="analysisType"
-          value={analysisType}
-          onChange={(e) => setAnalysisType(e.target.value)}
-        >
-          <option value="sit-stand">Sit-Stand</option>
-          {/* Add more if you want: */}
-          {/* <option value="other-type">Other Type</option> */}
-        </select>
-      </div>
+        {!webcamAvailable && <p style={{ color: "red", fontWeight: "bold" }}>{error}</p>}
 
-      {/* Live Camera Preview */}
-      <video
-        ref={videoRef}
-        width="400"
-        height="300"
-        autoPlay
-        style={{ backgroundColor: '#000' }}
-      />
+        {webcamAvailable && <Webcam ref={webcamRef} />}
 
-      <div style={{ marginTop: '20px' }}>
-        {!recording ? (
-          <button onClick={startRecording}>Start Recording</button>
-        ) : (
-          <button onClick={stopRecording}>Stop Recording</button>
+        <div>
+          {recording ? (
+              <>
+                <button onClick={stopRecording} style={{ margin: "10px", padding: "10px", backgroundColor: "red", color: "white", border: "none", borderRadius: "5px" }}>
+                  Stop
+                </button>
+                <p>Time Remaining: <strong>{time} seconds</strong></p>
+              </>
+          ) : (
+              <button
+                  onClick={startRecording}
+                  disabled={!webcamAvailable}
+                  style={{
+                    margin: "10px",
+                    padding: "10px",
+                    backgroundColor: webcamAvailable ? "green" : "gray",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "5px",
+                    cursor: webcamAvailable ? "pointer" : "not-allowed"
+                  }}
+              >
+                Record
+              </button>
+          )}
+        </div>
+
+        {videoBlob && (
+            <div>
+              <h3>Review Your Recording:</h3>
+              <video src={URL.createObjectURL(videoBlob)} controls style={{ width: "100%", maxWidth: "500px" }} />
+              <br />
+              <button onClick={downloadVideo} style={{ margin: "10px", padding: "10px", backgroundColor: "black", color: "white", border: "none", borderRadius: "5px" }}>
+                Download
+              </button>
+              <button onClick={uploadToServer} style={{ margin: "10px", padding: "10px", backgroundColor: "blue", color: "white", border: "none", borderRadius: "5px" }}>
+                Upload
+              </button>
+            </div>
+        )}
+
+        {isProcessing && loader_animation()}
+
+        {uploadStatus && <p>{uploadStatus}</p>}
+
+        {testConcluded && processingResult && (
+            <div style={{ marginTop: "20px" }}>
+              {processingResult.success && <p>{processingResult.success}</p>}
+              {processingResult.reps && (
+                  <p>
+                    <strong>Sit-Stand Count:</strong> {processingResult.reps}
+                  </p>
+              )}
+              <img
+                  src={SitStandScores}
+                  alt="Below Average Scores Based on Age Group"
+                  style={{ maxWidth: "100%", marginTop: "20px" }}
+              />
+            </div>
         )}
       </div>
-
-      {/* Once data is available, let user "Save" the in-memory video to a URL */}
-      {videoChunks.length > 0 && !videoURL && (
-        <div style={{ marginTop: '20px' }}>
-          <button onClick={handleSaveVideo}>Save Video</button>
-        </div>
-      )}
-
-      {/* Show local preview once "Save Video" has been clicked */}
-      {videoURL && (
-        <div style={{ marginTop: '20px' }}>
-          <h4>Recorded Video Preview</h4>
-          <video src={videoURL} width="400" controls />
-          <div style={{ marginTop: '20px' }}>
-            <button onClick={handleUpload}>Confirm Upload & Analyze</button>
-          </div>
-        </div>
-      )}
-
-      <div style={{ marginTop: '30px' }}>
-        <Link to="/">
-          <button>Back to Main</button>
-        </Link>
-      </div>
-    </div>
   );
-}
+};
+
+export default RecordPage;
